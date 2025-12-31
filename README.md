@@ -13,11 +13,16 @@ This project is a working prototype designed to explore how generative AI can be
 
 **This prototype:**
 ✔ Uses real job description text (manually provided)
+
 ✔ Produces real, queryable insights
+
 ✔ Demonstrates architectural decision-making
 
 **This prototype does not:**
 ❌ Automate large-scale ingestion
+
 ❌ Include production-grade monitoring
+
 ❌ Optimize for performance or throughput
+
 ❌ Serve as a hiring or ranking system
