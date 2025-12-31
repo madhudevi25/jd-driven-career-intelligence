@@ -9,7 +9,7 @@ By separating semantic interpretation (AI) from analytical reasoning (SQL), the 
 	• Differentiating requirements that signal higher maturity or specialized needs
 	• Emerging expectations related to governance, human-in-the-loop processes, and ownership
 
-This project is a working prototype designed to explore how generative AI can be used responsibly to interpret and normalize unstructured job descriptions for analytical purposes within limited resourses to manage cost control.
+This project is a working prototype designed to explore how generative AI can be used responsibly to interpret and normalize unstructured job descriptions for analytical purposes within limited resourses to manage cost control. The goal is not to predict hiring outcomes, but to transform fragmented job descriptions into actionable career intelligence.
 
 **This prototype:**
 
