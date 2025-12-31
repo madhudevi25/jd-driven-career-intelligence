@@ -1,1 +1,276 @@
+//Run this script in Google AppScript
 
+function ingestJDsToBigQuery() {
+  const PROJECT_ID = '<Google Project ID>';
+  const DATASET_ID = '<BigQuery DataSet>';
+  const TABLE_ID = '<Table_Name>';
+  const FOLDER_ID = '<Google Folder ID>';
+
+  const folder = DriveApp.getFolderById(FOLDER_ID);
+  const filesIter = folder.getFilesByType(MimeType.GOOGLE_DOCS);
+
+  let inserted = 0;
+  let skipped = 0;
+
+  while (filesIter.hasNext()) {
+    const file = filesIter.next();
+    const docId = file.getId();
+    const docTitle = file.getName();
+
+    // --- Duplicate guard: skip if this doc_id already exists in BigQuery ---
+    if (docAlreadyInBigQuery(PROJECT_ID, DATASET_ID, TABLE_ID, docId)) {
+      skipped++;
+      Logger.log(`Skipped (already ingested): ${docTitle} (${docId})`);
+      continue;
+    }
+
+    const doc = DocumentApp.openById(docId);
+    const rawText = doc.getBody().getText();
+
+    const row = {
+      json: {
+        doc_id: docId,
+        doc_title: docTitle,
+        doc_url: `https://docs.google.com/document/d/${docId}`,
+        ingested_at: new Date().toISOString(),
+        raw_text: rawText
+      }
+    };
+
+    const response = BigQuery.Tabledata.insertAll(
+      { rows: [row] },
+      PROJECT_ID,
+      DATASET_ID,
+      TABLE_ID
+    );
+
+    if (response.insertErrors && response.insertErrors.length > 0) {
+      Logger.log(`Insert error for docId=${docId}: ${JSON.stringify(response.insertErrors)}`);
+    } else {
+      inserted++;
+      Logger.log(`Inserted: ${docTitle} (${docId})`);
+    }
+  }
+
+  Logger.log(`Done. Inserted ${inserted}, Skipped ${skipped}.`);
+}
+
+/**
+ * Returns true if a doc_id is already present in the raw_docs table.
+ * Uses a parameterized BigQuery query to avoid SQL injection and quoting issues.
+ */
+function docAlreadyInBigQuery(projectId, datasetId, tableId, docId) {
+  const query = `
+    SELECT 1
+    FROM \`${datasetId}.${tableId}\`
+    WHERE doc_id = @doc_id
+    LIMIT 1
+  `;
+
+  const request = {
+    query: query,
+    useLegacySql: false,
+    parameterMode: 'NAMED',
+    queryParameters: [
+      {
+        name: 'doc_id',
+        parameterType: { type: 'STRING' },
+        parameterValue: { value: docId }
+      }
+    ]
+  };
+
+  const results = BigQuery.Jobs.query(request, projectId);
+  const rows = results.rows || [];
+  return rows.length > 0;
+}
+
+//Add Phase 2 extraction code (Gemini + BigQuery)
+//Objective: Pull “not-yet-extracted” docs from BigQuery; Call Gemini generateContent; Parse JSON; Insert into extractions
+
+function runGeminiExtractionBatch() {
+  const PROJECT_ID = 'jd-insight-analysis';
+  const DATASET_ID = 'jd_insights';
+  const RAW_TABLE = 'raw_docs';
+  const OUT_TABLE = 'extractions';
+
+  const rows = fetchDocsNeedingExtraction(PROJECT_ID, DATASET_ID, RAW_TABLE, OUT_TABLE, 10); // batch size 10
+  Logger.log(`Docs to extract: ${rows.length}`);
+
+  let success = 0;
+  let failed = 0;
+
+  rows.forEach(r => {
+    const docId = r.doc_id;
+    const docTitle = r.doc_title || '';
+    const rawText = r.raw_text || '';
+
+    try {
+      const extracted = extractWithGemini(rawText, docTitle);
+
+      // Insert to BigQuery
+      const bqRow = {
+        json: {
+          doc_id: docId,
+          company: extracted.company || null,
+          role_title: extracted.role_title || null,
+          ai_responsibilities: extracted.ai_responsibilities || [],
+          ai_skills: extracted.ai_skills || [],
+          tools_platforms: extracted.tools_platforms || [],
+          governance_flags: extracted.governance_flags || [],
+          evidence: extracted.evidence || [],
+          hitl_flag: typeof extracted.hitl_flag === 'boolean' ? extracted.hitl_flag : null,
+          model_ownership_level: extracted.model_ownership_level || null,
+          extracted_at: new Date().toISOString(),
+          extractor_version: 'apps-script-gemini-v0.1'
+        }
+      };
+
+      const resp = BigQuery.Tabledata.insertAll(
+        { rows: [bqRow] },
+        PROJECT_ID,
+        DATASET_ID,
+        OUT_TABLE
+      );
+
+      if (resp.insertErrors && resp.insertErrors.length > 0) {
+        failed++;
+        Logger.log(`BigQuery insert error docId=${docId}: ${JSON.stringify(resp.insertErrors)}`);
+      } else {
+        success++;
+        Logger.log(`Extracted + inserted: ${docId} (${docTitle})`);
+      }
+    } catch (e) {
+      failed++;
+      Logger.log(`Extraction failed docId=${docId}: ${e && e.message ? e.message : e}`);
+    }
+  });
+
+  Logger.log(`Batch done. Success=${success}, Failed=${failed}`);
+}
+
+/**
+ * Fetch docs in raw_docs that do not yet have a matching doc_id in extractions.
+ */
+function fetchDocsNeedingExtraction(projectId, datasetId, rawTable, outTable, limit) {
+  const query = `
+    SELECT r.doc_id, r.doc_title, r.raw_text
+    FROM \`${datasetId}.${rawTable}\` r
+    LEFT JOIN \`${datasetId}.${outTable}\` e
+      ON r.doc_id = e.doc_id
+    WHERE e.doc_id IS NULL
+    ORDER BY r.ingested_at DESC
+    LIMIT @lim
+  `;
+
+  const request = {
+    query,
+    useLegacySql: false,
+    parameterMode: 'NAMED',
+    queryParameters: [{
+      name: 'lim',
+      parameterType: { type: 'INT64' },
+      parameterValue: { value: String(limit) }
+    }]
+  };
+
+  const result = BigQuery.Jobs.query(request, projectId);
+  const rows = result.rows || [];
+  return rows.map(row => ({
+    doc_id: row.f[0].v,
+    doc_title: row.f[1].v,
+    raw_text: row.f[2].v
+  }));
+}
+
+/**
+ * Calls Gemini generateContent and returns parsed JSON object.
+ */
+function extractWithGemini(rawText, docTitle) {
+  const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+  if (!apiKey) throw new Error('Missing GEMINI_API_KEY in Script Properties. Run setGeminiApiKey().');
+
+  const model = 'gemini-2.5-flash'; // changeable
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+  const prompt = buildExtractionPrompt(rawText, docTitle);
+
+  const payload = {
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: prompt }]
+      }
+    ],
+    generationConfig: {
+      temperature: 0.2
+    }
+  };
+
+  const resp = UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
+
+  const status = resp.getResponseCode();
+  const body = resp.getContentText();
+
+  if (status < 200 || status >= 300) {
+    throw new Error(`Gemini API HTTP ${status}: ${body}`);
+  }
+
+  const data = JSON.parse(body);
+
+  // Extract text from the first candidate
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error(`No text returned by Gemini. Raw response: ${body}`);
+
+  // Gemini might wrap JSON in code fences; strip them defensively
+  const cleaned = text
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/```$/i, '')
+    .trim();
+
+  let parsed;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (e) {
+    throw new Error(`Failed to parse JSON. Gemini returned: ${text}`);
+  }
+
+  return parsed;
+}
+
+function buildExtractionPrompt(rawText, docTitle) {
+  // Keep this strict to reduce hallucinated fields.
+  return `
+You are a JD Insight Analyst extracting AI-related Product Manager requirements.
+Return ONLY valid JSON. No markdown. No backticks.
+
+Context:
+- Document title: "${docTitle}"
+
+Task:
+From the job description text below, extract:
+1) company (if present in text; else null)
+2) role_title (if present; else use best guess based on title; else null)
+3) ai_responsibilities: array of normalized bullets focused on AI/ML/GenAI work
+4) ai_skills: array of normalized skills (e.g., evaluation, prompt design, model monitoring, experimentation)
+5) tools_platforms: array of tools/platforms mentioned (e.g., Vertex AI, BigQuery, LangChain)
+6) governance_flags: array of governance topics mentioned (e.g., privacy, security, bias, fairness, compliance, explainability)
+7) hitl_flag: true if human-in-the-loop / review / escalation is mentioned, else false
+8) model_ownership_level: one of ["none","shared","full"] based on accountability language
+9) evidence: array of 3-6 short snippets (<=20 words each) copied from the JD that support key AI requirements
+
+Rules:
+- Use only information present in the JD.
+- If not found, use null (for strings) or [] (for arrays).
+- Output must be a single JSON object.
+
+Job Description:
+${rawText}
+`.trim();
+}
