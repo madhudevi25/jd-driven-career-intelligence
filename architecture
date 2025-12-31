@@ -1,1 +1,12 @@
 
+JD Source (LinkedIn / Docs)
+        ↓
+Structured Extraction (Gemini)
+        ↓
+Normalized Skill & Responsibility Taxonomy
+        ↓
+Pattern Detection (BigQuery)
+        ↓
+Insight Narratives (Slides / Dashboard)
+
+---------------------------------------
