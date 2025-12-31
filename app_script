@@ -89,10 +89,10 @@ function docAlreadyInBigQuery(projectId, datasetId, tableId, docId) {
 //Objective: Pull “not-yet-extracted” docs from BigQuery; Call Gemini generateContent; Parse JSON; Insert into extractions
 
 function runGeminiExtractionBatch() {
-  const PROJECT_ID = 'jd-insight-analysis';
-  const DATASET_ID = 'jd_insights';
-  const RAW_TABLE = 'raw_docs';
-  const OUT_TABLE = 'extractions';
+  const PROJECT_ID = '<Google Project ID>';
+  const DATASET_ID = '<BigQuery DataSet>';
+  const RAW_TABLE = '<Table_Name - holds unstructure data>';
+  const OUT_TABLE = '<Table_Name to push the structured output>';
 
   const rows = fetchDocsNeedingExtraction(PROJECT_ID, DATASET_ID, RAW_TABLE, OUT_TABLE, 10); // batch size 10
   Logger.log(`Docs to extract: ${rows.length}`);
