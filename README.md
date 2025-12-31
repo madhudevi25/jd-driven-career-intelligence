@@ -12,6 +12,7 @@ By separating semantic interpretation (AI) from analytical reasoning (SQL), the 
 This project is a working prototype designed to explore how generative AI can be used responsibly to interpret and normalize unstructured job descriptions for analytical purposes within limited resourses to manage cost control.
 
 **This prototype:**
+
 ✔ Uses real job description text (manually provided)
 
 ✔ Produces real, queryable insights
@@ -19,6 +20,7 @@ This project is a working prototype designed to explore how generative AI can be
 ✔ Demonstrates architectural decision-making
 
 **This prototype does not:**
+
 ❌ Automate large-scale ingestion
 
 ❌ Include production-grade monitoring
