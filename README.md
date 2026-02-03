@@ -1,5 +1,7 @@
 **AI-Powered Job Description Analysis for Product Manager Roles**
-To give every applicant the clarity in the noise.
+
+To turn job seeking into intentional choice.
+
 Overview:
 This project is a working prototype to develop career intelligence from a job applicant perspective. I, as an applicant, wants to analyze job descriptions posted for a given job title, e.g.  AI Product Manager, across the companies. Job descriptions posted for the similar skillsets uses multiple ways to express similar expectations, making it difficult to articulate what required skills are common versus what skillsets  are unique or emerging and in what sector.
 
